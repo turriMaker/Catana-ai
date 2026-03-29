@@ -1,0 +1,474 @@
+\documentclass[11pt, a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[spanish]{babel}
+\usepackage{geometry}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{parskip}
+\usepackage{titlesec}
+\usepackage{enumitem}
+\usepackage{fancyhdr}
+\usepackage{graphicx}
+
+\geometry{margin=2.5cm}
+
+% Colores para código
+\definecolor{codebg}{RGB}{245,245,245}
+\definecolor{codeframe}{RGB}{200,200,200}
+\definecolor{keyword}{RGB}{0,0,180}
+\definecolor{comment}{RGB}{100,100,100}
+\definecolor{string}{RGB}{180,0,0}
+
+\lstset{
+  backgroundcolor=\color{codebg},
+  frame=single,
+  rulecolor=\color{codeframe},
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{keyword}\bfseries,
+  commentstyle=\color{comment}\itshape,
+  stringstyle=\color{string},
+  breaklines=true,
+  numbers=left,
+  numberstyle=\tiny\color{gray},
+  numbersep=8pt,
+  showstringspaces=false,
+  language=Python,
+}
+
+\lstdefinestyle{bash}{
+  language=bash,
+  backgroundcolor=\color{black!90},
+  basicstyle=\ttfamily\small\color{white},
+  keywordstyle=\color{green!70},
+  frame=none,
+  numbers=none,
+}
+
+\pagestyle{fancy}
+\fancyhf{}
+\rhead{Catan AI -- Documentación Técnica}
+\lhead{Fase 3: Red Neuronal}
+\rfoot{Página \thepage}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!60!black,
+  urlcolor=blue!60!black,
+}
+
+% ──────────────────────────────────────────────────────────────────────────────
+
+\begin{document}
+
+\begin{titlepage}
+  \centering
+  \vspace*{3cm}
+  {\Huge\bfseries Catan AI\par}
+  \vspace{0.5cm}
+  {\Large Documentación Técnica -- Fase 3\par}
+  \vspace{0.3cm}
+  {\large Red Neuronal con Aprendizaje por Refuerzo\par}
+  \vspace{2cm}
+  \rule{0.6\textwidth}{0.4pt}
+  \vspace{0.5cm}
+
+  \begin{tabular}{ll}
+    \textbf{Entorno:}    & \texttt{catanatron}       \\
+    \textbf{Red:}        & PyTorch (CPU)             \\
+    \textbf{Algoritmo:}  & REINFORCE                 \\
+    \textbf{Estado:}     & Vector de 250 features    \\
+    \textbf{Acciones:}   & Espacio fijo de 244       \\
+  \end{tabular}
+
+  \vspace{2cm}
+  \rule{0.6\textwidth}{0.4pt}
+  \vspace{0.5cm}
+
+  {\large Proyecto desarrollado en Python}\par
+  \vspace{0.3cm}
+  {\large\textit{Stack: catanatron + PyTorch + matplotlib}}\par
+  \vfill
+\end{titlepage}
+
+% ──────────────────────────────────────────────────────────────────────────────
+\tableofcontents
+\newpage
+
+% ──────────────────────────────────────────────────────────────────────────────
+\section{Descripción General}
+
+Este documento describe la implementación de la \textbf{Fase 3} del proyecto Catan AI: el
+diseño, entrenamiento y evaluación de una red neuronal que aprende a jugar al Catan mediante
+aprendizaje por refuerzo (\textit{Reinforcement Learning}, RL).
+
+\subsection{Benchmarks de referencia}
+
+\begin{center}
+\begin{tabular}{lcc}
+  \toprule
+  \textbf{Agente} & \textbf{Victorias / 200} & \textbf{Tasa de victoria} \\
+  \midrule
+  Aleatorio (Fase 1)   & $\sim$50 & $\sim$25\% \\
+  Heurístico (Fase 2)  & 93       & 46.5\%     \\
+  Red neuronal (Fase 3)& ?        & \textbf{objetivo: $>$46.5\%} \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Estructura de archivos}
+
+\begin{center}
+\begin{tabular}{ll}
+  \toprule
+  \textbf{Archivo} & \textbf{Propósito} \\
+  \midrule
+  \texttt{model.py}           & Features, codificación de acciones, arquitectura de la red \\
+  \texttt{neural\_player.py}  & Jugador que usa la red para decidir \\
+  \texttt{train.py}           & Bucle de entrenamiento REINFORCE \\
+  \texttt{eval.py}            & Evaluación formal contra otros agentes \\
+  \texttt{plot.py}            & Gráfico del progreso del entrenamiento \\
+  \texttt{heuristic\_player.py} & Agente de Fase 2 (oponente de referencia) \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+
+% ──────────────────────────────────────────────────────────────────────────────
+\section{Representación del Estado}
+
+La red recibe el estado del juego como un vector numérico de dimensión $\mathbf{250}$,
+construido en \texttt{model.py} por la función \texttt{extract\_features(state, color)}.
+
+\subsection{Composición del vector}
+
+\begin{center}
+\begin{tabular}{clc}
+  \toprule
+  \textbf{Índices} & \textbf{Componente} & \textbf{Dimensión} \\
+  \midrule
+  0--99   & Estado de los 4 jugadores (25 features $\times$ 4)  & 100 \\
+  100--153 & Edificios en los 54 nodos del tablero               & 54  \\
+  154--225 & Caminos en las 72 aristas del tablero               & 72  \\
+  226--244 & Posición del ladrón (one-hot sobre 19 fichas)       & 19  \\
+  245--249 & Recursos del banco (normalizados)                   & 5   \\
+  \midrule
+  & \textbf{Total}                                              & \textbf{250} \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Features por jugador (25 por jugador)}
+
+Para cada jugador, la perspectiva se \textbf{rota} de forma que el jugador RL aparece
+siempre en la posición $P_0$. Esto permite que la red aprenda de forma independiente
+del color asignado.
+
+Las 25 features por jugador son:
+\begin{itemize}[noitemsep]
+  \item 10 stats: puntos de victoria (visibles y reales), caminos/colonias/ciudades
+        disponibles, longitud de camino más largo, banderas de turno.
+  \item 5 recursos en mano: WOOD, BRICK, SHEEP, WHEAT, ORE.
+  \item 5 cartas de desarrollo en mano: KNIGHT, YEAR\_OF\_PLENTY, MONOPOLY,
+        ROAD\_BUILDING, VICTORY\_POINT.
+  \item 5 cartas de desarrollo jugadas.
+\end{itemize}
+
+\subsection{Codificación del tablero}
+
+\begin{itemize}[noitemsep]
+  \item \textbf{Nodos} (54): $+1$ colonia propia, $+2$ ciudad propia,
+        $-1$ colonia rival, $-2$ ciudad rival, $0$ vacío.
+  \item \textbf{Aristas} (72): $+1$ camino propio, $-1$ camino rival, $0$ sin camino.
+  \item \textbf{Ladrón}: vector one-hot de 19 posiciones (fichas de tierra).
+  \item \textbf{Banco}: cada recurso normalizado por 19 (cantidad máxima inicial).
+\end{itemize}
+
+
+% ──────────────────────────────────────────────────────────────────────────────
+\section{Espacio de Acciones}
+
+Se define un espacio de acciones \textbf{fijo} de dimensión $\mathbf{244}$, con una
+máscara binaria que anula las acciones inválidas en cada estado.
+
+\begin{center}
+\begin{tabular}{clc}
+  \toprule
+  \textbf{Índices} & \textbf{Tipo de acción} & \textbf{Cantidad} \\
+  \midrule
+  0        & ROLL                              & 1  \\
+  1        & END\_TURN                         & 1  \\
+  2        & BUY\_DEVELOPMENT\_CARD            & 1  \\
+  3        & PLAY\_KNIGHT\_CARD                & 1  \\
+  4        & PLAY\_ROAD\_BUILDING              & 1  \\
+  5--58    & BUILD\_SETTLEMENT (nodo 0--53)    & 54 \\
+  59--112  & BUILD\_CITY (nodo 0--53)          & 54 \\
+  113--184 & BUILD\_ROAD (arista 0--71)        & 72 \\
+  185--203 & MOVE\_ROBBER (ficha 0--18)        & 19 \\
+  204--208 & PLAY\_MONOPOLY (recurso 0--4)     & 5  \\
+  209--223 & PLAY\_YEAR\_OF\_PLENTY (15 combos)& 15 \\
+  224--243 & MARITIME\_TRADE (20 combos)       & 20 \\
+  \midrule
+  & \textbf{Total}                            & \textbf{244} \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+La acción \texttt{DISCARD} no se incluye en el espacio fijo por su complejidad
+combinatoria; se maneja con selección aleatoria entre las opciones válidas.
+
+
+% ──────────────────────────────────────────────────────────────────────────────
+\section{Arquitectura de la Red Neuronal}
+
+La red implementada en \texttt{model.py} (\texttt{CatanNet}) es un perceptrón
+multicapa (\textit{Multi-Layer Perceptron}, MLP):
+
+\[
+  \text{input}\ (250) \;\to\; \underbrace{[256 \to \text{ReLU}]}_{\times 3} \;\to\; \text{output}\ (244)
+\]
+
+\begin{lstlisting}[caption={Definición de CatanNet en PyTorch}]
+class CatanNet(nn.Module):
+    def __init__(self, hidden_size=256, num_layers=3):
+        super().__init__()
+        layers = [nn.Linear(STATE_SIZE, hidden_size), nn.ReLU()]
+        for _ in range(num_layers - 1):
+            layers += [nn.Linear(hidden_size, hidden_size), nn.ReLU()]
+        layers.append(nn.Linear(hidden_size, ACTION_SPACE_SIZE))
+        self.net = nn.Sequential(*layers)
+
+    def forward(self, x):
+        return self.net(x)  # retorna logits (244,)
+\end{lstlisting}
+
+La salida son \textbf{logits} (sin softmax). La selección de acción aplica:
+\begin{enumerate}
+  \item Mascarar logits inválidos con $-\infty$.
+  \item Aplicar softmax para obtener una distribución de probabilidad.
+  \item Durante entrenamiento: muestrear (exploración estocástica).
+  \item Durante evaluación: argmax (acción más probable).
+\end{enumerate}
+
+
+% ──────────────────────────────────────────────────────────────────────────────
+\section{Algoritmo de Entrenamiento: REINFORCE}
+
+Se utiliza el algoritmo \textbf{REINFORCE} (Policy Gradient de Monte Carlo),
+implementado en \texttt{train.py}.
+
+\subsection{Fundamento teórico}
+
+El objetivo es maximizar la recompensa esperada $J(\theta) = \mathbb{E}_\pi[R]$.
+El gradiente de la política es:
+
+\[
+  \nabla_\theta J(\theta) = \mathbb{E}_\pi \left[
+    \sum_{t=0}^{T} \nabla_\theta \log \pi_\theta(a_t \mid s_t) \cdot R
+  \right]
+\]
+
+donde $R \in \{+1, -1\}$ es la recompensa al final del juego (victoria o derrota).
+
+\subsection{Función de pérdida}
+
+\[
+  \mathcal{L}(\theta) = -\frac{1}{T} \sum_{t=0}^{T} \log \pi_\theta(a_t \mid s_t) \cdot R
+\]
+
+\subsection{Hiperparámetros}
+
+\begin{center}
+\begin{tabular}{ll}
+  \toprule
+  \textbf{Parámetro} & \textbf{Valor} \\
+  \midrule
+  Optimizador        & Adam           \\
+  Learning rate      & $10^{-4}$      \\
+  Capas ocultas      & 3 $\times$ 256 \\
+  Recompensa         & $+1$ victoria, $-1$ derrota \\
+  Clipping de gradiente & $\|\nabla\| \leq 1.0$ \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Bucle de entrenamiento}
+
+\begin{lstlisting}[caption={Episodio de entrenamiento simplificado}]
+def run_episode(model, optimizer):
+    rl_player = NeuralPlayer(Color.RED, model, training=True)
+    others    = [HeuristicPlayer(c) for c in [BLUE, WHITE, ORANGE]]
+    game = Game([rl_player] + others)
+    game.play()
+
+    reward    = +1.0 if game.winning_color() == Color.RED else -1.0
+    log_probs = torch.stack(rl_player.log_probs)
+    loss      = -(log_probs * reward).mean()
+
+    optimizer.zero_grad()
+    loss.backward()
+    torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+    optimizer.step()
+\end{lstlisting}
+
+
+% ──────────────────────────────────────────────────────────────────────────────
+\section{Guía de Uso}
+
+\subsection{Requisitos}
+
+\begin{lstlisting}[style=bash]
+cd C:\Users\franc\Documents\catan-ai
+venv\Scripts\activate
+\end{lstlisting}
+
+Las dependencias necesarias son \texttt{catanatron}, \texttt{torch},
+\texttt{numpy} y \texttt{matplotlib}, ya instaladas en el entorno virtual.
+
+\subsection{Entrenamiento}
+
+\begin{lstlisting}[style=bash]
+# Entrenamiento básico (5000 episodios vs heurístico)
+python train.py
+
+# Empezar vs aleatorio (más rápido, bueno para las primeras épocas)
+python train.py --episodes 2000 --opponents random --save model_pre.pt
+
+# Continuar entrenamiento desde un checkpoint
+python train.py --load model_pre.pt --episodes 5000 --opponents heuristic
+
+# Especificar archivo de métricas
+python train.py --metrics mi_run.csv
+\end{lstlisting}
+
+El entrenamiento guarda automáticamente:
+\begin{itemize}[noitemsep]
+  \item \texttt{best\_model.pt} — mejor modelo según evaluación formal.
+  \item \texttt{model.pt} — checkpoint cada 500 episodios.
+  \item \texttt{metrics.csv} — historial de tasas de victoria.
+\end{itemize}
+
+\subsection{Evaluación}
+
+\begin{lstlisting}[style=bash]
+# Evaluar el mejor modelo (200 partidas vs heurístico y vs aleatorio)
+python eval.py
+
+# Evaluar otro checkpoint con más partidas
+python eval.py --model model.pt --games 400
+\end{lstlisting}
+
+Salida de ejemplo:
+\begin{lstlisting}[style=bash]
+Resultados vs heuristic (200 partidas):
+  Red Neuronal (RED):    98 victorias  (49.0%)
+  Heuristico (BLUE):    48 victorias  (24.0%)
+  ...
+  Objetivo (Fase 3):   46.5%
+  Red neuronal:        49.0%  OBJETIVO SUPERADO
+\end{lstlisting}
+
+\subsection{Visualización del progreso}
+
+\begin{lstlisting}[style=bash]
+# Abrir gráfico interactivo
+python plot.py
+
+# Guardar como imagen PNG
+python plot.py --save grafico.png
+
+# Usar un archivo de métricas específico
+python plot.py --file mi_run.csv
+\end{lstlisting}
+
+El gráfico muestra:
+\begin{itemize}[noitemsep]
+  \item Línea azul: tasa de victoria durante entrenamiento (media móvil, ventana 30).
+  \item Puntos rojos: evaluaciones formales contra el heurístico cada 100 episodios.
+  \item Línea gris punteada: baseline aleatorio (25\%).
+  \item Línea naranja punteada: objetivo de Fase 3 (46.5\%).
+\end{itemize}
+
+
+% ──────────────────────────────────────────────────────────────────────────────
+\section{Flujo Completo Recomendado}
+
+\begin{enumerate}
+  \item \textbf{Pre-entrenamiento rápido} contra jugadores aleatorios para que la red
+        aprenda lo básico (colocar colonias, construir, etc.):
+        \begin{lstlisting}[style=bash]
+python train.py --episodes 2000 --opponents random --save model_pre.pt
+        \end{lstlisting}
+
+  \item \textbf{Entrenamiento principal} contra el heurístico para superar el 46.5\%:
+        \begin{lstlisting}[style=bash]
+python train.py --load model_pre.pt --episodes 8000 --save model_final.pt
+        \end{lstlisting}
+
+  \item \textbf{Monitorear el progreso} con el gráfico (en otra terminal):
+        \begin{lstlisting}[style=bash]
+python plot.py
+        \end{lstlisting}
+
+  \item \textbf{Evaluación final} para comparar con los benchmarks:
+        \begin{lstlisting}[style=bash]
+python eval.py --model best_model.pt --games 200
+        \end{lstlisting}
+\end{enumerate}
+
+
+% ──────────────────────────────────────────────────────────────────────────────
+\section{Desafíos Técnicos}
+
+\begin{description}
+  \item[Credit assignment] La recompensa llega al final del juego
+        (50--100 decisiones). REINFORCE atribuye el mismo peso a todas las
+        decisiones, lo cual es una aproximación gruesa. La Fase 4 aborda esto
+        con PPO y discounting.
+
+  \item[Información imperfecta] El estado del juego incluye las cartas de todos
+        los jugadores (información completa). Una mejora futura es enmascarar
+        los recursos de los rivales para simular juego real.
+
+  \item[Espacio de acciones variable] Catan tiene acciones que dependen
+        completamente del estado (localización de caminos, colonias, etc.).
+        La máscara binaria sobre un espacio fijo de 244 acciones resuelve
+        esto de forma eficiente.
+
+  \item[Acción DISCARD] Cuando un jugador tiene más de 7 cartas al caer un 7,
+        debe descartar la mitad. Esta acción tiene un espacio combinatorio enorme
+        y se maneja con selección aleatoria en la implementación actual.
+
+  \item[Múltiples jugadores] REINFORCE estándar asume un entorno de un solo
+        agente. Con 4 jugadores, el entorno es no-estacionario desde la
+        perspectiva de la red.
+\end{description}
+
+
+% ──────────────────────────────────────────────────────────────────────────────
+\section{Próximos Pasos -- Fase 4}
+
+\begin{itemize}
+  \item Implementar \textbf{PPO} (Proximal Policy Optimization) para
+        entrenamiento más estable.
+  \item \textbf{Self-play} contra versiones anteriores de la red en lugar
+        del agente heurístico fijo.
+  \item Añadir \textbf{función de valor} (actor-critic) para reducir la
+        varianza del gradiente.
+  \item Modelar el \textbf{comercio marítimo} en el espacio de acciones de
+        forma más completa.
+  \item Explorar \textbf{comercio entre jugadores} (el mayor desafío único de Catan).
+\end{itemize}
+
+\vfill
+\begin{center}
+  \rule{0.5\textwidth}{0.4pt}\\[0.3em]
+  \small Proyecto Catan AI $\cdot$ Fase 3 completada $\cdot$
+  Python + catanatron + PyTorch
+\end{center}
+
+\end{document}
